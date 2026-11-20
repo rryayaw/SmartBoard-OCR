@@ -13,7 +13,8 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe cli.py "C:\path\to\board.jpg" outputs\board-01
 ```
 
-This stage corrects EXIF orientation, resizes large photos, and writes `oriented.png`.
+This stage writes `corrected.png` after optional perspective correction and grayscale enhancement.
+Use `--no-rectify` to retain the full frame.
 
 ## Evaluation
 
