@@ -2,14 +2,17 @@ import contextlib
 import io
 import json
 from pathlib import Path
+import subprocess
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 import cv2
 import numpy as np
 from PIL import Image
 
 from cli import main
+from recognition import recognize
 from smartboard import detect, load_photo
 
 
@@ -67,10 +70,40 @@ class BaselineTests(unittest.TestCase):
             self.assertEqual(main([str(self.photo), str(out), *flags]), 0)
         return out, json.loads((out / "results.json").read_text(encoding="utf-8"))
 
+    def test_missing_recognizer_keeps_byte_identical_detection(self):
+        with patch("recognition.recognize") as hook:
+            out, plain = self.run_cli("plain")
+            hook.assert_not_called()
+        other, extended = self.run_cli("extended", "--recognize", "--tesseract", str(self.root / "missing.exe"))
+        self.assertEqual(plain["recognition"]["status"], "disabled")
+        self.assertEqual(extended["recognition"]["status"], "unavailable")
+        self.assertEqual(plain["regions"], extended["regions"])
+        for name in ("corrected.png", "overlay.png"):
+            self.assertEqual((out / name).read_bytes(), (other / name).read_bytes())
 
-    def test_cli_exports_detection_only(self):
-        out, report = self.run_cli("detected")
-        self.assertTrue((out / "corrected.png").is_file())
-        self.assertTrue((out / "overlay.png").is_file())
+    def test_recognizer_timeout_retains_completed_region(self):
+        regions = [{"id": "r001", "bbox_xywh": [0, 0, 20, 20]}, {"id": "r002", "bbox_xywh": [20, 20, 20, 20]}]
+        good = subprocess.CompletedProcess([], 0, b"CLIENT\n", b"")
+        with patch("recognition.which", return_value="tesseract"), patch(
+            "recognition.subprocess.run", side_effect=[good, subprocess.TimeoutExpired("tesseract", 1)]
+        ):
+            report = recognize(np.full((40, 40), 200, np.uint8), regions, "tesseract", "eng", 10)
+        self.assertEqual((report["status"], report["failure"]), ("partial", "timed_out"))
+        self.assertEqual(report["by_region"], {"r001": {"status": "recognized", "text": "CLIENT"}})
+
+    def test_recognizer_success_uses_same_region_ids(self):
+        good = subprocess.CompletedProcess([], 0, b"CLIENT\n", b"")
+        with patch("recognition.which", return_value="tesseract"), patch("recognition.subprocess.run", return_value=good):
+            _, report = self.run_cli("success", "--recognize")
+        self.assertEqual(report["recognition"]["status"], "completed")
+        self.assertEqual(set(report["recognition"]["by_region"]), {r["id"] for r in report["regions"]})
+
+    def test_recognizer_exception_still_writes_report(self):
+        with patch("recognition.recognize", side_effect=RuntimeError("internal error")):
+            _, report = self.run_cli("error", "--recognize")
+        self.assertEqual(report["recognition"]["status"], "failed")
         self.assertTrue(report["regions"])
-        self.assertNotIn("recognition", report)
+
+
+if __name__ == "__main__":
+    unittest.main()
