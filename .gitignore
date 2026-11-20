@@ -14,7 +14,17 @@ venv/
 !.env.example
 
 # Local datasets, model weights, and generated artifacts
-/data/
+/data/*
+!/data/dev/
+!/data/test/
+/data/dev/*
+/data/test/*
+!/data/dev/images/
+!/data/test/images/
+/data/dev/images/*
+/data/test/images/*
+!/data/dev/images/.gitkeep
+!/data/test/images/.gitkeep
 /datasets/
 /models/
 /outputs/
