@@ -2,11 +2,20 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
+from time import perf_counter
 
 import cv2
 import numpy as np
 from PIL import Image, ImageOps
+
+
+@dataclass
+class Detection:
+    corrected: np.ndarray
+    overlay: np.ndarray
+    report: dict
 
 
 def load_photo(path: Path, max_side: int = 1600) -> tuple[np.ndarray, list[int], np.ndarray]:
@@ -64,3 +73,70 @@ def enhance(rgb: np.ndarray) -> np.ndarray:
     normalized = cv2.divide(gray, np.maximum(illumination, 1), scale=245)
     blended = cv2.addWeighted(normalized, 0.55, gray, 0.45, 0)
     return cv2.createCLAHE(clipLimit=1.6, tileGridSize=(8, 8)).apply(blended)
+
+
+def locate(gray: np.ndarray) -> list[list[int]]:
+    """Group nearby dark strokes into candidate text regions, not verified text."""
+    h, w = gray.shape
+    window = max(15, round(min(h, w) * 0.035)) | 1
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (window, window))
+    response = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, kernel)
+    otsu, _ = cv2.threshold(response, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+    ink = (response >= max(12, round(otsu * 0.8))).astype(np.uint8)
+    for shape in ((1, max(35, w // 9)), (max(35, h // 9), 1)):
+        lines = cv2.morphologyEx(ink, cv2.MORPH_OPEN, np.ones(shape, np.uint8))
+        ink[lines != 0] = 0
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(ink, connectivity=8)
+    keep = np.zeros(count, dtype=np.uint8)
+    for i, (_, _, bw, bh, area) in enumerate(stats[1:], 1):
+        if max(4, w * h // 350000) <= area and bw < w * 0.3 and bh < h * 0.22:
+            keep[i] = 1
+    ink = keep[labels]
+    grouped = cv2.dilate(ink, np.ones((max(2, h // 230), max(5, w // 105)), np.uint8))
+    count, groups, stats, _ = cv2.connectedComponentsWithStats(grouped, connectivity=8)
+    boxes = []
+    for i, (x, y, bw, bh, _) in enumerate(stats[1:], 1):
+        if bw < 9 or bh < 6 or bh > h * 0.24 or bw / bh > 28:
+            continue
+        ys, xs = np.nonzero((groups[y:y+bh, x:x+bw] == i) & ink[y:y+bh, x:x+bw])
+        if len(xs) < 10 or not 0.04 <= len(xs) / (bw * bh) <= 0.82:
+            continue
+        x0 = max(0, x + int(xs.min()) - 2)
+        y0 = max(0, y + int(ys.min()) - 2)
+        x1 = min(w, x + int(xs.max()) + 3)
+        y1 = min(h, y + int(ys.max()) + 3)
+        boxes.append([int(x0), int(y0), int(x1 - x0), int(y1 - y0)])
+    return sorted(boxes, key=lambda box: (box[1], box[0]))
+
+
+def detect(path: Path, *, auto_rectify: bool = True) -> Detection:
+    started = perf_counter()
+    rgb, source_size, resize = load_photo(path)
+    board, warp, rectified = rectify(rgb) if auto_rectify else (rgb, np.eye(3), False)
+    corrected = enhance(board)
+    boxes = locate(corrected)
+    overlay = cv2.cvtColor(corrected, cv2.COLOR_GRAY2RGB)
+    warnings = []
+    if auto_rectify and not rectified:
+        warnings.append("Board outline not found; retained the full frame.")
+    if not boxes:
+        warnings.append("No candidate text regions found; this does not establish that the board is blank.")
+    regions = []
+    for number, (x, y, w, h) in enumerate(boxes, 1):
+        regions.append({"id": f"r{number:03}", "bbox_xywh": [x, y, w, h]})
+        cv2.rectangle(overlay, (x, y), (x + w - 1, y + h - 1), (0, 135, 68), 2)
+        cv2.putText(overlay, str(number), (x, max(12, y - 3)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 105, 45), 1, cv2.LINE_AA)
+    h, w = corrected.shape
+    return Detection(corrected, overlay, {
+        "schema_version": 1,
+        "source_size_wh": source_size,
+        "source_orientation": "EXIF-normalized",
+        "coordinate_image": "corrected.png",
+        "coordinate_size_wh": [w, h],
+        "source_to_corrected": (warp @ resize).tolist(),
+        "rectification": "applied" if rectified else ("not_found" if auto_rectify else "disabled"),
+        "detector": "opencv_dark_stroke_candidates_v0",
+        "regions": regions,
+        "warnings": warnings,
+        "detection_seconds": round(perf_counter() - started, 4),
+    })

@@ -1,12 +1,12 @@
-"""Process one local whiteboard photo."""
+"""Run SmartBoard OCR on one local image."""
 
 import argparse
+import json
 from pathlib import Path
 
 from PIL import Image
 
-import numpy as np
-from smartboard import enhance, load_photo, rectify
+from smartboard import detect
 
 
 def main(argv=None) -> int:
@@ -16,15 +16,20 @@ def main(argv=None) -> int:
     parser.add_argument("--no-rectify", action="store_true", help="Retain the entire image")
     args = parser.parse_args(argv)
     try:
-        rgb, _, _ = load_photo(args.image)
-        board, _, applied = rectify(rgb) if not args.no_rectify else (rgb, np.eye(3), False)
-        processed = enhance(board)
-        if not args.no_rectify and not applied:
-            print("Warning: board outline not found; retained the full frame.")
+        result = detect(args.image, auto_rectify=not args.no_rectify)
         args.output.mkdir(parents=True, exist_ok=False)
-        Image.fromarray(processed).save(args.output / "corrected.png")
+        Image.fromarray(result.corrected).save(args.output / "corrected.png")
+        Image.fromarray(result.overlay).save(args.output / "overlay.png")
+        report = result.report
+        (args.output / "results.json").write_text(
+            json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
     except (OSError, ValueError, Image.DecompressionBombError) as exc:
         parser.exit(1, f"SmartBoard: {exc}\n")
+    print(f"{len(report['regions'])} candidate region(s)")
+    for warning in report["warnings"]:
+        if warning:
+            print(f"Warning: {warning}")
     return 0
 
 
