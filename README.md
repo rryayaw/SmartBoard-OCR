@@ -104,6 +104,27 @@ is not an independent test of the final weights. Inference exports boxes and
 confidence scores in EXIF-oriented source coordinates, plus a PNG overlay. It
 does not transcribe handwriting or replace the OpenCV CLI.
 
+### Train the Proposal Ranker
+
+An alternative to training a detector from scratch: generate OpenCV and
+pretrained CRAFT proposals with `benchmark_detectors.py`, then train the
+ranker from the same CVAT manifest and the benchmark's `predictions.json`.
+The ranker considers short groups of nearby boxes alongside the original
+proposals. It learns which candidates resemble the annotated regions;
+the OpenCV and CRAFT weights and settings are unchanged.
+
+```powershell
+.\.venv\Scripts\python.exe train_box_ranker.py train outputs\pilot-label-review\pilot-manifest-review-v2.json outputs\pilot-label-review\benchmark-draft\predictions.json models\pilot-line\box-ranker.json outputs\pilot-line-ranker\metrics.json
+.\.venv\Scripts\python.exe train_box_ranker.py infer models\pilot-line\box-ranker.json outputs\pilot-label-review\benchmark-draft\predictions.json outputs\pilot-label-review\pilot-manifest-review-v2.json outputs\pilot-line-ranker\predictions.json
+```
+
+The metrics omit one photo at a time and fit both the ranker and its score
+cutoff on the remaining photos. The saved model is separately fit on all five.
+For new images, generate proposals using a manifest with image names, oriented
+sizes, and empty `text` and `ignore` lists, then run the ranker `infer` command
+with that manifest. Inference never uses labels. Leave-one-photo-out scores on
+the development pilot do not establish accuracy on independent boards.
+
 ## Status
 
 The default CLI still uses OpenCV heuristics, with no training or CRAFT
