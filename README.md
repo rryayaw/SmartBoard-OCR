@@ -83,10 +83,32 @@ covers at least half its area. A word box is not a match for a full line unless
 it meets the same overlap rule. This compares pipeline defaults, not a
 controlled ablation of preprocessing or grouping.
 
+## Train the Five-Photo Prototype
+
+The optional training script uses CPU PyTorch and torchvision (same install
+command as above; EasyOCR is not needed). It trains a small box detector from
+scratch. Use the five-image CVAT manifest and matching originals:
+
+```powershell
+.\.venv\Scripts\python.exe train_detector.py train outputs\pilot-label-review\pilot-manifest-review-v2.json data\dev\variated models\pilot-line\pilot-five.pt outputs\pilot-line-training
+.\.venv\Scripts\python.exe train_detector.py infer models\pilot-line\pilot-five.pt data\dev\variated\clean.jpg outputs\pilot-line-example
+```
+
+If using the local `outputs\craft-deps` directory instead of installing PyTorch
+in the venv, set `$env:PYTHONPATH = (Resolve-Path outputs\craft-deps).Path` first.
+Use fresh output and checkpoint paths for reruns.
+
+By default the script trains on four photos and saves a one-photo sanity check
+on `angled.jpg`, then trains a fresh checkpoint on all five. The sanity check
+is not an independent test of the final weights. Inference exports boxes and
+confidence scores in EXIF-oriented source coordinates, plus a PNG overlay. It
+does not transcribe handwriting or replace the OpenCV CLI.
+
 ## Status
 
-Local CLI baseline only. The detector uses OpenCV heuristics, with no custom
-training or CRAFT dependency. There is no web interface or deployment yet.
+The default CLI still uses OpenCV heuristics, with no training or CRAFT
+dependency. The optional trained detector is a five-photo experiment; there
+is no web interface or deployment yet.
 
 Custom datasets, model weights, credentials, and local development logs are not
 included in this repository.
