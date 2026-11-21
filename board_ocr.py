@@ -85,7 +85,12 @@ def main(argv=None):
     parser.add_argument("--no-rectify", action="store_true")
     parser.add_argument("--compare", action="store_true", help="Run both original color and enhanced grayscale")
     parser.add_argument("--variant", choices=("original", "enhanced"), default="original")
+    parser.add_argument("--recognize", action="store_true", help="Export local TrOCR guesses and crops")
+    parser.add_argument("--trocr-model", type=Path, default=Path("models/trocr-small-handwritten"))
+    parser.add_argument("--ocr-limit", type=int, default=10, help="Maximum regions to transcribe")
     args = parser.parse_args(argv)
+    if args.ocr_limit < 0:
+        parser.error("--ocr-limit cannot be negative")
     if args.output.exists():
         parser.error("Output directory already exists")
     try:
@@ -94,6 +99,12 @@ def main(argv=None):
         variants = ("original", "enhanced") if args.compare else (args.variant,)
         detected = {variant: detect_board(board, reader, variant) for variant in variants}
         report = save_review(args.output, args.image, board, detected, args.variant)
+        if args.recognize:
+            from handwritten import export_transcript
+
+            oc_image = board.color if args.variant == "original" else board.enhanced
+            report["recognition"] = export_transcript(args.output, oc_image, report["regions"],
+                                                      args.trocr_model, args.ocr_limit)
         write_json(args.output / "results.json", report)
     except (OSError, ValueError, ImportError, Image.DecompressionBombError) as exc:
         parser.exit(1, f"Board OCR: {exc}\n")
