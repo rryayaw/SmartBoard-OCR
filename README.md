@@ -133,3 +133,55 @@ is no web interface or deployment yet.
 
 Custom datasets, model weights, credentials, and local development logs are not
 included in this repository.
+
+## End-to-End OCR Experiment
+
+`board_ocr.py` exports `board.png`, the enhanced `corrected.png`, numbered
+overlays, and `results.json` with polygons in both board and source coordinates.
+`--compare` runs the same detector on both views. The original board view is
+the default detection input; `--variant enhanced` opts into enhancement for
+detection and crop recognition. Rectification can fail; `--crop X Y W H`
+excludes a known projection or background area using EXIF-oriented source
+pixels. Enhancement cannot reconstruct handwriting lost to clipped glare.
+
+```powershell
+.\.venv\Scripts\python.exe board_ocr.py photo.jpg outputs\review-craft --compare
+```
+
+With CRAFT, `--ranker models\pilot-line\box-ranker.json` exports optional merge
+suggestions. The ranker never removes a CRAFT detection or automatically
+merges table cells. These scores are not OCR confidence scores.
+
+The optional PP-OCRv6 medium detector uses an isolated Python environment
+with `requirements.txt` and `requirements-paddle.txt`. Install the Paddle
+requirements after the base requirements. The first `--download` populates
+`models/paddle-cache`; later runs load the local checkpoint.
+
+```powershell
+.\outputs\paddle-venv\Scripts\python.exe board_ocr.py photo.jpg outputs\review-paddle --detector pp-ocrv6 --compare --download
+```
+
+Install `requirements-handwritten.txt` in the CPU PyTorch environment used
+for CRAFT, not in the Paddle environment. Download the pinned
+[TrOCR handwriting checkpoint](https://huggingface.co/microsoft/trocr-small-handwritten/tree/b4648cfa171985a6745f37ddd637e98c0da958ac)
+once using that environment, then run recognition offline:
+
+```powershell
+.\.venv\Scripts\python.exe -c "from huggingface_hub import snapshot_download; snapshot_download('microsoft/trocr-small-handwritten', revision='b4648cfa171985a6745f37ddd637e98c0da958ac', allow_patterns=['*.json','*.model','pytorch_model.bin'], local_dir='models/trocr-small-handwritten')"
+.\.venv\Scripts\python.exe handwritten.py outputs\review-paddle outputs\review-transcript --limit 10
+```
+
+With CRAFT, you can also pass `--recognize --ocr-limit 10` to `board_ocr.py`.
+Both recognition paths export editable `transcript.txt` and numbered crops.
+Every nonempty result needs review; the model can guess plausible but wrong
+text. Reading order is approximate and does not reconstruct tables.
+
+To reproduce the controlled comparison, run `compare_board_inputs.py` with a
+CVAT manifest, original image folder, fresh output folder, `--detector`, and
+`--weights`. It holds geometry fixed and evaluates both input variants. The
+five annotated development photos favored PP-OCRv6 over CRAFT at 0.50 IoU.
+Enhancement was not consistently better at stricter 0.75 IoU, so it remains
+optional for detection. The three additional unlabeled boards were checked
+visually, not scored. See [EasyOCR v1.7.2](https://github.com/JaidedAI/EasyOCR/releases/tag/v1.7.2)
+and [PaddleOCR 3.7.0 / PP-OCRv6](https://github.com/PaddlePaddle/PaddleOCR/releases/tag/v3.7.0)
+for the backend releases used.
