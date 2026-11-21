@@ -1,0 +1,2 @@
+# Install CPU torch and torchvision first (see README).
+easyocr==1.7.2

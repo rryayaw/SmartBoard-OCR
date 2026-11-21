@@ -63,6 +63,26 @@ explicit `ignore` boxes separately from `text` and does not infer glare masks
 or change your source files. Keep the manifest local. These pilot examples are
 for development, not a held-out test split.
 
+### Compare OpenCV With Pretrained CRAFT
+
+CRAFT is an optional CPU benchmark and does not change the default CLI.
+In your virtual environment, install CPU PyTorch and the optional dependencies:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install torch==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cpu
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-craft.txt
+.\.venv\Scripts\python.exe benchmark_detectors.py outputs\pilot-manifest.json data\dev\variated outputs\craft-benchmark --download
+```
+
+Use `--download` on the first run to allow EasyOCR to fetch its pretrained
+detector weights into `models/craft`. No recognition model is loaded. Both
+pipelines are scored against the same boxes using one-to-one matching at
+IoU 0.50 and 0.75, with source-space polygons and per-image scores in the run
+folder. An unmatched prediction is ignored only if an explicit ignore box
+covers at least half its area. A word box is not a match for a full line unless
+it meets the same overlap rule. This compares pipeline defaults, not a
+controlled ablation of preprocessing or grouping.
+
 ## Status
 
 Local CLI baseline only. The detector uses OpenCV heuristics, with no custom
