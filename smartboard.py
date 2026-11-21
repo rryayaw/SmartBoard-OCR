@@ -18,10 +18,19 @@ class Detection:
     report: dict
 
 
-def load_photo(path: Path, max_side: int = 1600) -> tuple[np.ndarray, list[int], np.ndarray]:
+@dataclass
+class Board:
+    color: np.ndarray
+    enhanced: np.ndarray
+    source_size: list[int]
+    transform: np.ndarray
+    geometry: str
+
+
+def load_photo(path: Path, max_side: int = 1600, *, max_pixels: int = 30_000_000) -> tuple[np.ndarray, list[int], np.ndarray]:
     with Image.open(path) as photo:
-        if photo.width * photo.height > 30_000_000:
-            raise ValueError("Input exceeds the 30 megapixel limit.")
+        if photo.width * photo.height > max_pixels:
+            raise ValueError(f"Input exceeds the {max_pixels / 1_000_000:g} megapixel limit.")
         photo = ImageOps.exif_transpose(photo).convert("RGB")
         width, height = photo.size
         scale = min(1, max_side / max(width, height))
@@ -73,6 +82,28 @@ def enhance(rgb: np.ndarray) -> np.ndarray:
     normalized = cv2.divide(gray, np.maximum(illumination, 1), scale=245)
     blended = cv2.addWeighted(normalized, 0.55, gray, 0.45, 0)
     return cv2.createCLAHE(clipLimit=1.6, tileGridSize=(8, 8)).apply(blended)
+
+
+def prepare_board(path: Path, *, crop=None, auto_rectify=True) -> Board:
+    rgb, size, transform = load_photo(path, max_pixels=50_000_000)
+    if crop is not None:
+        x, y, w, h = crop
+        if not (0 <= x < x+w <= size[0] and 0 <= y < y+h <= size[1]):
+            raise ValueError("Board crop must be inside the EXIF-oriented source image.")
+        sx, sy = transform[0, 0], transform[1, 1]
+        x0, y0, x1, y1 = round(x*sx), round(y*sy), round((x+w)*sx), round((y+h)*sy)
+        if min(x1-x0, y1-y0) < 32:
+            raise ValueError("Board crop must be at least 32 pixels on each side after resizing.")
+        rgb = rgb[y0:y1, x0:x1]
+        transform = np.array([[1, 0, -x0], [0, 1, -y0], [0, 0, 1]]) @ transform
+        geometry = "manual_crop"
+    elif auto_rectify:
+        rgb, warp, applied = rectify(rgb)
+        transform = warp @ transform
+        geometry = "rectified" if applied else "full_frame_fallback"
+    else:
+        geometry = "full_frame"
+    return Board(rgb, enhance(rgb), size, transform, geometry)
 
 
 def locate(gray: np.ndarray) -> list[list[int]]:
