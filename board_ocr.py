@@ -109,12 +109,15 @@ def main(argv=None):
     parser.add_argument("--no-rectify", action="store_true")
     parser.add_argument("--compare", action="store_true", help="Run both original color and enhanced grayscale")
     parser.add_argument("--variant", choices=("original", "enhanced"), default="original")
+    parser.add_argument("--ranker", type=Path, help="Optional CRAFT merge suggestions; never filters boxes")
     parser.add_argument("--recognize", action="store_true", help="Export local TrOCR guesses and crops")
     parser.add_argument("--trocr-model", type=Path, default=Path("models/trocr-small-handwritten"))
     parser.add_argument("--ocr-limit", type=int, default=10, help="Maximum regions to transcribe")
     args = parser.parse_args(argv)
     if args.ocr_limit < 0:
         parser.error("--ocr-limit cannot be negative")
+    if args.ranker and args.detector != "craft":
+        parser.error("--ranker is only supported with CRAFT")
     if args.output.exists():
         parser.error("Output directory already exists")
     try:
@@ -124,6 +127,11 @@ def main(argv=None):
         variants = ("original", "enhanced") if args.compare else (args.variant,)
         detected = {variant: detect_board(board, predict, variant) for variant in variants}
         report = save_review(args.output, args.image, board, detected, args.variant, args.detector)
+        if args.ranker:
+            from merge_review import suggest_merges
+
+            model = json.loads(args.ranker.read_text(encoding="utf-8"))
+            report["merge_suggestions"] = suggest_merges(board, report["regions"], model)
         if args.recognize:
             from handwritten import export_transcript
 
