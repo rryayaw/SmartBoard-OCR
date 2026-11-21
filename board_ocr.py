@@ -1,7 +1,8 @@
-"""Run CRAFT on a prepared whiteboard and export reviewable results."""
+"""Detect text on a prepared whiteboard and export reviewable results."""
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 import cv2
@@ -23,6 +24,28 @@ def load_craft(weights, download=False):
     )
 
 
+def detector_backend(name, weights, download=False):
+    if name == "craft":
+        reader = load_craft(weights, download)
+        return lambda rgb: craft_regions(reader, rgb)
+    os.environ["PADDLE_PDX_CACHE_HOME"] = str(weights.resolve())
+    from paddleocr import TextDetection
+
+    checkpoint = weights / "official_models" / "PP-OCRv6_medium_det"
+    if not download and not (checkpoint / "inference.yml").is_file():
+        raise ValueError(f"Paddle weights missing: {checkpoint}. Use --download with the configured cache.")
+    model = TextDetection(model_name="PP-OCRv6_medium_det",
+                          model_dir=str(checkpoint) if checkpoint.is_dir() else None,
+                          device="cpu", enable_mkldnn=False, cpu_threads=4)
+
+    def predict(rgb):
+        result = next(iter(model.predict(cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR))))
+        return [cv2.convexHull(np.float32(polygon)).reshape(-1, 2)
+                for polygon in result["dt_polys"]]
+
+    return predict
+
+
 def region_list(polygons, board):
     height, width = board.enhanced.shape
     output = []
@@ -38,9 +61,9 @@ def region_list(polygons, board):
     return [{"id": f"r{i:03d}", **r} for i, r in enumerate(output, 1)]
 
 
-def detect_board(board, reader, variant):
+def detect_board(board, predict, variant):
     rgb = board.color if variant == "original" else cv2.cvtColor(board.enhanced, cv2.COLOR_GRAY2RGB)
-    return region_list(craft_regions(reader, rgb), board)
+    return region_list(predict(rgb), board)
 
 
 def draw_regions(image, regions):
@@ -58,7 +81,7 @@ def write_json(path, value):
     path.write_text(json.dumps(value, indent=2, ensure_ascii=False, allow_nan=False) + "\n", encoding="utf-8")
 
 
-def save_review(output, image, board, detected, selected):
+def save_review(output, image, board, detected, selected, detector):
     output.mkdir(parents=True, exist_ok=False)
     Image.fromarray(board.color).save(output / "board.png")
     Image.fromarray(board.enhanced).save(output / "corrected.png")
@@ -68,7 +91,7 @@ def save_review(output, image, board, detected, selected):
         Image.fromarray(draw_regions(image_data, regions)).save(output / f"overlay-{variant}.png")
     return {"source": image.name, "source_size_wh": board.source_size,
             "source_to_board": board.transform.tolist(), "geometry": board.geometry,
-            "detector": "pretrained_craft", "selected_variant": selected,
+            "detector": detector, "selected_variant": selected,
             "regions": detected[selected], "variants": detected,
             "reading_order": "approximate_top_to_bottom",
             "warnings": (["Board outline not found; full frame retained. Use --crop to exclude surrounding content."]
@@ -79,7 +102,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("image", type=Path)
     parser.add_argument("output", type=Path)
-    parser.add_argument("--weights", type=Path, default=Path("models/craft"))
+    parser.add_argument("--detector", choices=("craft", "pp-ocrv6"), default="craft")
+    parser.add_argument("--weights", type=Path, help="Model directory (CRAFT) or Paddle cache root")
     parser.add_argument("--download", action="store_true")
     parser.add_argument("--crop", type=int, nargs=4, metavar=("X", "Y", "W", "H"))
     parser.add_argument("--no-rectify", action="store_true")
@@ -95,10 +119,11 @@ def main(argv=None):
         parser.error("Output directory already exists")
     try:
         board = prepare_board(args.image, crop=args.crop, auto_rectify=not args.no_rectify)
-        reader = load_craft(args.weights, args.download)
+        weights = args.weights or Path("models/craft" if args.detector == "craft" else "models/paddle-cache")
+        predict = detector_backend(args.detector, weights, args.download)
         variants = ("original", "enhanced") if args.compare else (args.variant,)
-        detected = {variant: detect_board(board, reader, variant) for variant in variants}
-        report = save_review(args.output, args.image, board, detected, args.variant)
+        detected = {variant: detect_board(board, predict, variant) for variant in variants}
+        report = save_review(args.output, args.image, board, detected, args.variant, args.detector)
         if args.recognize:
             from handwritten import export_transcript
 
