@@ -48,6 +48,21 @@ Tests use synthetic images and simulated OCR responses. Real-board localization
 accuracy and handwriting recognition quality are not established. Evaluate on
 reviewed boxes first; add checked transcriptions only when testing recognition.
 
+## Import CVAT Labels
+
+Export annotations as CVAT COCO 1.0 ZIPs, then pass the ZIPs and the local
+directory containing the matching original images:
+
+```powershell
+.\.venv\Scripts\python.exe coco_pilot.py data\dev\variated outputs\pilot-manifest.json $zip1 $zip2
+```
+
+Set `$zip1`, `$zip2`, etc. to the paths of your CVAT export files. The importer checks
+EXIF-oriented dimensions, box bounds, and duplicate images/boxes. It preserves
+explicit `ignore` boxes separately from `text` and does not infer glare masks
+or change your source files. Keep the manifest local. These pilot examples are
+for development, not a held-out test split.
+
 ## Status
 
 Local CLI baseline only. The detector uses OpenCV heuristics, with no custom
