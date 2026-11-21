@@ -1,5 +1,10 @@
 """Local, review-first handwriting transcription for detected board regions."""
 
+import argparse
+import json
+from pathlib import Path
+
+import numpy as np
 from PIL import Image, ImageOps
 
 
@@ -15,6 +20,7 @@ def load_trocr(model_dir):
     import torch
     from transformers import TrOCRProcessor, VisionEncoderDecoderModel
 
+    torch.set_num_threads(4)
     processor = TrOCRProcessor.from_pretrained(model_dir, local_files_only=True, use_fast=False)
     model = VisionEncoderDecoderModel.from_pretrained(model_dir, local_files_only=True).eval()
 
@@ -60,3 +66,27 @@ def export_transcript(output, image, regions, model_dir, limit):
     return {"engine": "trocr_small_handwritten", "by_region": entries,
             "status": "review_required" if recognize else ("unavailable" if warning else "not_attempted"),
             "warning": warning}
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("review", type=Path, help="Existing board_ocr.py output directory")
+    parser.add_argument("output", type=Path)
+    parser.add_argument("--model", type=Path, default=Path("models/trocr-small-handwritten"))
+    parser.add_argument("--limit", type=int, default=10)
+    args = parser.parse_args()
+    if args.limit < 0:
+        parser.error("--limit cannot be negative")
+    report = json.loads((args.review / "results.json").read_text(encoding="utf-8"))
+    image_name = "corrected.png" if report["selected_variant"] == "enhanced" else "board.png"
+    args.output.mkdir(parents=True)
+    with Image.open(args.review / image_name) as image:
+        recognition = export_transcript(args.output, np.asarray(image), report["regions"], args.model, args.limit)
+    (args.output / "recognition.json").write_text(
+        json.dumps(recognition, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    if recognition["warning"]:
+        print(recognition["warning"])
+
+
+if __name__ == "__main__":
+    main()
